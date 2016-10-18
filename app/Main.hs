@@ -31,10 +31,7 @@ inferHeads k = (l, pl)
 
 -- | Tally Sheet Helpers
 diceBowl :: [Integer] -> [Int] -> Dist Int
-diceBowl counts dice = fnub $ weighted $ map f $ zip counts dice
-  where total = sum counts
-        f (c,a) = (c % total, a)
-        f :: (Integer, Int) -> (Rational, Int)
+diceBowl counts dice = fnub $ weighted $ zip counts dice
 
 draw2 :: Dist Int -> Dist [Int]
 draw2 bowl = fnub $ do dice <- sequence [bowl, bowl]
@@ -48,22 +45,27 @@ roll2sum d1 d2 = fnub $ do roll1 <- uniform [1..d1]
                            return $ roll1 + roll2
 
 data Tally = LeftT | MiddleT | RightT deriving (Show, Eq, Ord)
+rules :: Int -> Tally
+rules n
+  | n < 16 = LeftT
+  | n > 16 = RightT
+  | otherwise = MiddleT
 
 tally :: Dist Int -> (Int -> Tally) -> Dist Tally
 tally sums f = fnub $ fmap f sums
 
-tallyDist :: Dist Int -> Int -> Dist ([Int], (Int, Int, Int))
-tallyDist bowl rolls = fnub $
-  do [d1,d2] <- draw2 bowl
-     tallies <- sequence $ replicate rolls $ tally (roll2sum d1 d2) rules
-     return ([d1,d2], (left tallies, middle tallies, right tallies))
+getXinY :: Dist a -> (a -> Bool) -> Int -> Int -> Dist Bool
+getXinY as f x y = go x y
   where
-    [left, middle, right] = map (\x -> length . filter (== x)) [LeftT, MiddleT, RightT]
-    rules n
-      | n < 16 = LeftT
-      | n > 16 = RightT
-      | otherwise = MiddleT
-    rules :: Int -> Tally
+    as' = fnub $ pmap f as
+    go :: Int -> Int -> Dist Bool
+    go 0 0       = return True
+    go x y
+     | x > y     = return False
+     | x <= 0    = getXinY as (not . f) y y
+     | otherwise = do hit <- as'
+                      if hit then go (x-1) (y-1)
+                             else go x (y-1)
 
 main :: IO ()
 main = do putStrLn $ printf "G. Throw d6; P(H>=3) is %.2f%%" (percent ((>= 3) . numHeads) d6coins)
@@ -73,11 +75,16 @@ main = do putStrLn $ printf "G. Throw d6; P(H>=3) is %.2f%%" (percent ((>= 3) . 
                                     return $ numHeads coins
                       in percent (==3) dist)
           putStrLn $ printf "L. Throw d6; H=1; most likely N is %d (P=%.2f%%)" answerL answerLP
-{-
-          putStrLn $ printf "N. P(d12 = 2 AND RightMarks = 3) is $.10f%%"
-                      (let tallysheet = tallyDist bowl 3
-                           pred (ds@[d1,d2], (l,m,r)) = ds == [12,12] && r == 3
-                       in  percent pred tallysheet)
--}
+          putStrLn $ printf "N. P(d12 = 2 AND RightMarks = 3) is %.5f%%"
+                     (let pOf2d12 = probability (== [12,12]) $ draw2 bowl
+                          tallyD = tally (roll2sum 12 12) rules
+                          pOf3Right = probability (==True) $ getXinY tallyD (==RightT) 3 30
+                      in  toPercent $ pOf2d12 * pOf3Right)
+          putStrLn $ printf "O. P(all marks in left) == %.4f%%"
+                      (let dist = do [d1,d2] <- draw2 bowl
+                                     let sumD = roll2sum d1 d2
+                                     let tallyD = tally sumD rules
+                                     getXinY tallyD (==LeftT) 30 30
+                       in percent (==True) dist)
   where (answerL, answerLP) = inferHeads 1
-        bowl = diceBowl [2,4,6] [6,12,20]
+        bowl = diceBowl [9,9,14,14] [6,8,12,20]

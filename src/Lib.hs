@@ -1,14 +1,17 @@
 module Lib
     ( ProbabilityMonad
-    , Dist
+    , Dist (Dist)
     , probability
     , percent
+    , toPercent
     , infer
     , mostLikely
     , fnub
-    , merge
+    , dedup
+    , dedupf
     , support
     , uniform
+    , probs
     , weighted
     , pthen
     , join2
@@ -22,11 +25,14 @@ import Data.Ord (comparing)
 
 -- | Query functions
 probability :: (a -> Bool) -> Dist a -> Rational
-probability pred (Dist as) = sum [ p | (p,a) <- as, pred a]
+probability pred (Dist as) = go as 0
+  where go [] p = p
+        go ((p',a):as) p
+           | pred a    = go as (p+p')
+           | otherwise = go as p
 
 percent :: (a -> Bool) -> Dist a -> Double
-percent p dist = (* 100) $ (fromIntegral n) / (fromIntegral d)
-  where [n,d] = [numerator, denominator] <*> [probability p dist]
+percent p as = toPercent $ probability p as
 
 mostLikely :: Dist a -> a
 mostLikely (Dist (a:as)) = go as a
@@ -42,16 +48,24 @@ infer select pred as =
 
 -- | Utility
 -- | combines equivalent events and removes zero-probility events
+toPercent :: Rational -> Double
+toPercent r = (* 100) $ (fromIntegral n) / (fromIntegral d)
+  where [n,d] = [numerator, denominator] <*> [r]
+
 fnub :: Ord a => Dist a -> Dist a
-fnub = merge . support
+fnub = dedup . support
 
 support :: Dist a -> Dist a
 support (Dist as) = Dist [ (p,a) | (p,a) <- as, p > 0 ]
 
-merge :: Ord a => Dist a -> Dist a
-merge (Dist as) = Dist $ fmap sumPs gs
-  where as' = sortBy (comparing snd) as
-        gs = groupBy (\a b -> snd a == snd b) as'
+dedup :: Ord a => Dist a -> Dist a
+dedup = dedupf id
+
+dedupf :: Ord b => (a -> b) -> Dist a -> Dist a
+dedupf f (Dist as) = Dist $ fmap sumPs gs
+  where key = f . snd
+        as' = sortBy (comparing key) as
+        gs = groupBy (\a b -> key a == key b) as'
         sumPs xs = (sum $ map fst xs, snd $ head xs)
 
 -- | Implementation
@@ -70,6 +84,7 @@ instance Monad Dist where
 
 instance ProbabilityMonad Dist where
   uniform = uniformD
+  probs = Dist
   weighted = weightedD
   pthen as f = joinD as f'
     where f' a = fmap (\b -> (a,b)) (f a)
@@ -90,8 +105,10 @@ uniformD xs = Dist $ uni xs 0
     uni [] _ = []
     uni (x:xs) l = (1 % (toInteger $ 1 + l + length xs), x) : (uni xs (l + 1))
 
-weightedD :: [(Rational, a)] -> Dist a
-weightedD = Dist
+weightedD :: [(Integer, a)] -> Dist a
+weightedD as = Dist $ [ (w%total, a) | (w,a) <- as]
+  where (ws, _) = unzip as
+        total = sum ws
 
 joinD :: Dist a -> (a -> Dist b) -> Dist b
 joinD (Dist as) f = Dist [ (p*p', b) | (p,a) <- as, (p',b) <- unpackD $ f a ]
