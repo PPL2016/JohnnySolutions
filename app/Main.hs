@@ -3,6 +3,8 @@ module Main where
 import Lib
 import Text.Printf
 import Data.Ratio
+import Data.List (nub)
+import Math.Combinatorics.Exact.Binomial
 
 data Coin = H | T deriving (Show,Eq,Ord)
 
@@ -54,18 +56,12 @@ rules n
 tally :: Dist Int -> (Int -> Tally) -> Dist Tally
 tally sums f = fnub $ fmap f sums
 
-getXinY :: Dist a -> (a -> Bool) -> Int -> Int -> Dist Bool
-getXinY as f x y = go x y
-  where
-    as' = fnub $ pmap f as
-    go :: Int -> Int -> Dist Bool
-    go 0 0       = return True
-    go x y
-     | x > y     = return False
-     | x <= 0    = getXinY as (not . f) y y
-     | otherwise = do hit <- as'
-                      if hit then go (x-1) (y-1)
-                             else go x (y-1)
+binomial :: Integer -> Rational -> Dist Integer
+binomial n p = Dist $ zip (go n) $ reverse [0..n]
+  where np = 1 - p
+        go :: Integer -> [Rational]
+        go 0 = [np^n]
+        go k = (((choose n k)%1) * (p^k) * (np^(n-k))) : (go (k-1))
 
 main :: IO ()
 main = do putStrLn $ printf "G. Throw d6; P(H>=3) is %.2f%%" (percent ((>= 3) . numHeads) d6coins)
@@ -75,16 +71,26 @@ main = do putStrLn $ printf "G. Throw d6; P(H>=3) is %.2f%%" (percent ((>= 3) . 
                                     return $ numHeads coins
                       in percent (==3) dist)
           putStrLn $ printf "L. Throw d6; H=1; most likely N is %d (P=%.2f%%)" answerL answerLP
-          putStrLn $ printf "N. P(d12 = 2 AND RightMarks = 3) is %.5f%%"
-                     (let pOf2d12 = probability (== [12,12]) $ draw2 bowl
-                          tallyD = tally (roll2sum 12 12) rules
-                          pOf3Right = probability (==True) $ getXinY tallyD (==RightT) 3 30
-                      in  toPercent $ pOf2d12 * pOf3Right)
-          putStrLn $ printf "O. P(all marks in left) == %.4f%%"
-                      (let dist = do [d1,d2] <- draw2 bowl
-                                     let sumD = roll2sum d1 d2
-                                     let tallyD = tally sumD rules
-                                     getXinY tallyD (==LeftT) 30 30
-                       in percent (==True) dist)
+          putStrLn $ printf "N. P(d12 = 2 AND RightMarks = 3) is %.2f%%"
+                      (let pOfd12s = probability (==[12,12]) $ draw2 bowl
+                           tallyD = tally (roll2sum 12 12) rules
+                           pOfRight = probability (==RightT) tallyD
+                           pOf3Right = probability (==3) $ binomial 30 pOfRight
+                       in  toPercent $ pOfd12s * pOf3Right)
+          putStrLn $ printf "O. P(all marks in left) == %.2f%%"
+                      (let allLeft = do [d1,d2] <- draw2 bowl
+                                        let tallyD = tally (roll2sum d1 d2) rules
+                                        let pOfLeft = probability (==LeftT) tallyD
+                                        b <- binomial 30 pOfLeft
+                                        return $ b == 30
+                       in  percent id allLeft)
+          putStrLn $ printf "P. expected marks in right == %.1f"
+                      (let anyRight = do [d1,d2] <- draw2 bowl
+                                         let tallyD = tally (roll2sum d1 d2) rules
+                                         let pOfRight = probability (==RightT) tallyD
+                                         binomial 30 pOfRight
+                       in expectation fromInteger anyRight)
   where (answerL, answerLP) = inferHeads 1
-        bowl = diceBowl [9,9,14,14] [6,8,12,20]
+        dice = [6,8,12,20]
+        counts = [9,9,14,14]
+        bowl = diceBowl counts dice

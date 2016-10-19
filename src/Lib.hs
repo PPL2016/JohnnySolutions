@@ -16,12 +16,16 @@ module Lib
     , pthen
     , join2
     , pmap
+    , ExpectationMonad
+    , expectation
+    , SamplingMonad
+    , sample
     ) where
-
 import ProbabilityMonad
 import Data.Ratio
 import Data.List (groupBy, sortBy)
 import Data.Ord (comparing)
+import System.Random (randomR)
 
 -- | Query functions
 probability :: (a -> Bool) -> Dist a -> Rational
@@ -49,8 +53,7 @@ infer select pred as =
 -- | Utility
 -- | combines equivalent events and removes zero-probility events
 toPercent :: Rational -> Double
-toPercent r = (* 100) $ (fromIntegral n) / (fromIntegral d)
-  where [n,d] = [numerator, denominator] <*> [r]
+toPercent = (* 100) . fromRational
 
 fnub :: Ord a => Dist a -> Dist a
 fnub = dedup . support
@@ -91,8 +94,18 @@ instance ProbabilityMonad Dist where
   join2 as bs f = joinD bs (f as)
   pmap f = fmap f
 
+instance ExpectationMonad Dist where
+  expectation e (Dist as) = go as 0
+    where go [] total = total
+          go ((p,a):as) t = go as $ (fromRational p)*(e a) + t
+
+instance SamplingMonad Dist where
+  sample (Dist as) g = let (i, g') = randomR (0, length as - 1) g
+                           (_, a) = as!!i
+                       in (a,g')
+
 -- | Underlying implementation
-newtype Dist a = Dist [(Rational, a)] deriving Show
+newtype Dist a = Dist [(Rational, a)] deriving (Show, Eq)
 unpackD :: Dist a -> [(Rational, a)]
 unpackD (Dist xs) = xs
 
